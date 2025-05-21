@@ -1,4 +1,4 @@
-module redisbarrier
+module github.com/Igarashi-G/redisbarrier
 
 go 1.21
 
