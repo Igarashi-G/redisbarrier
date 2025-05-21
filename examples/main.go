@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"redisbarrier"
+
 	"github.com/go-redis/redis/v8"
-	"github.com/yourusername/redisbarrier"
 )
 
 func main() {

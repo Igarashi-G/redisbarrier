@@ -33,10 +33,6 @@ type Barrier interface {
 	// If an error occurs during the barrier action then that error will be returned and the barrier is placed in the broken state.
 	Await(ctx context.Context) error
 
-	// Reset resets the barrier to its initial state.
-	// If any parties are currently waiting at the barrier, they will return with a ErrBrokenBarrier.
-	Reset()
-
 	// GetNumberWaiting returns the number of parties currently waiting at the barrier.
 	GetNumberWaiting() int
 
@@ -47,6 +43,10 @@ type Barrier interface {
 	// Returns true if one or more parties broke out of this barrier due to interruption by ctx.Done() or the last reset,
 	// or a barrier action failed due to an error; false otherwise.
 	IsBroken() bool
+
+	// Reset resets the barrier to its initial state.
+	// If any parties are currently waiting at the barrier, they will return with ErrBrokenBarrier.
+	Reset()
 }
 
 // RedisBarrier represents a distributed barrier synchronization primitive using Redis.
@@ -116,7 +116,7 @@ func (b *RedisBarrier) Await(ctx context.Context) error {
 	timeoutSec := int(math.Round(b.timeout.Seconds()))
 	n, err := script.Run(ctx, b.client, []string{b.barrierKey}, timeoutSec).Result()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return fmt.Errorf("script execution failed for barrier %s", b.barrierKey)
 		}
 		return err
@@ -130,37 +130,70 @@ func (b *RedisBarrier) Await(ctx context.Context) error {
 		// Last party arrived, execute barrier action if exists
 		if b.action != nil {
 			if err := b.action(); err != nil {
-				b.breakBarrier()
+				b.breakBarrier(ctx)
 				return err
 			}
 		}
-		// Release all waiting parties
-		for i := 0; i < b.parties-1; i++ {
-			b.client.RPush(ctx, b.releaseKey, "go")
-		}
-		// Clean up barrier and release keys
-		b.client.Del(ctx, b.barrierKey)
-		b.client.Del(ctx, b.releaseKey)
+		// Release all waiting parties and clean up barrier and release keys
+		b.reset(ctx, true)
 	} else {
 		// Wait for release signal
-		_, err = b.client.BLPop(ctx, b.timeout, b.releaseKey).Result()
-		if err != nil {
-			if err == redis.Nil {
-				return fmt.Errorf("barrier %s wait timeout", b.barrierKey)
+		done := make(chan error, 1)
+		go func() {
+			_, err := b.client.BLPop(ctx, b.timeout, b.releaseKey).Result()
+			if err != nil {
+				if errors.Is(err, redis.Nil) {
+					done <- fmt.Errorf("barrier %s wait timeout", b.barrierKey)
+				} else {
+					done <- err
+				}
+			} else {
+				done <- nil
 			}
-			return err
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				return err
+			}
+			if b.broken {
+				return ErrBrokenBarrier
+			} else {
+				b.broken = false
+			}
+		case <-ctx.Done():
+			b.breakBarrier(ctx)
+			return ctx.Err()
 		}
 	}
 
 	return nil
 }
 
-// Reset resets the barrier to its initial state.
-// If any parties are currently waiting at the barrier, they will return with ErrBrokenBarrier.
-func (b *RedisBarrier) Reset() {
-	b.breakBarrier()
-	b.client.Del(context.Background(), b.barrierKey)
-	b.client.Del(context.Background(), b.releaseKey)
+func (b *RedisBarrier) reset(ctx context.Context, safe bool) {
+	if safe {
+		// broadcast
+		for i := 0; i < b.parties-1; i++ {
+			b.client.RPush(ctx, b.releaseKey, "go")
+		}
+		b.client.Del(ctx, b.barrierKey)
+		b.client.Del(ctx, b.releaseKey)
+	} else {
+		b.breakBarrier(ctx)
+	}
+}
+
+func (b *RedisBarrier) breakBarrier(ctx context.Context) {
+	if !b.broken {
+		b.broken = true
+	}
+	// broadcast
+	for i := 0; i < b.parties-1; i++ {
+		b.client.RPush(ctx, b.releaseKey, "go")
+	}
+	b.client.Del(ctx, b.barrierKey)
+	b.client.Del(ctx, b.releaseKey)
 }
 
 // GetNumberWaiting returns the number of parties currently waiting at the barrier.
@@ -182,7 +215,8 @@ func (b *RedisBarrier) IsBroken() bool {
 	return b.broken
 }
 
-// breakBarrier marks the barrier as broken.
-func (b *RedisBarrier) breakBarrier() {
-	b.broken = true
+// Reset resets the barrier to its initial state.
+func (b *RedisBarrier) Reset() {
+	ctx := context.Background()
+	b.breakBarrier(ctx)
 }

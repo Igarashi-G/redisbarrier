@@ -171,3 +171,148 @@ func TestBarrierGetNumberWaiting(t *testing.T) {
 	barrier.Reset()
 	<-done
 }
+
+func TestBarrierIsBroken(t *testing.T) {
+	client := setupTestRedis()
+	ctx := context.Background()
+
+	// Test initial state
+	barrier := NewRedisBarrier(client, "test_barrier_broken", 2, 5*time.Second)
+	assert.False(t, barrier.IsBroken())
+
+	// Test broken state after action error
+	actionErr := errors.New("action error")
+	barrierWithAction := NewRedisBarrierWithAction(client, "test_barrier_broken_action", 1, 5*time.Second, func() error {
+		return actionErr
+	})
+	err := barrierWithAction.Await(ctx)
+	assert.Error(t, err)
+	assert.True(t, barrierWithAction.IsBroken())
+}
+
+func TestBarrierContextCancellation(t *testing.T) {
+	client := setupTestRedis()
+	ctx, cancel := context.WithCancel(context.Background())
+	barrier := NewRedisBarrier(client, "test_barrier_context", 2, 5*time.Second)
+
+	// Start a goroutine that will be cancelled
+	done := make(chan bool)
+	go func() {
+		err := barrier.Await(ctx)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "context canceled")
+		done <- true
+	}()
+
+	// Wait a bit to ensure the goroutine has started waiting
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel the context
+	cancel()
+
+	// Wait for the goroutine to finish
+	<-done
+
+	// Verify barrier is broken
+	assert.True(t, barrier.IsBroken())
+}
+
+func TestBarrierRedisConnectionFailure(t *testing.T) {
+	// Create a client with invalid address
+	client := redis.NewClient(&redis.Options{
+		Addr:     "localhost:9999", // Invalid port
+		Password: "",
+		DB:       0,
+	})
+	barrier := NewRedisBarrier(client, "test_barrier_connection", 2, 5*time.Second)
+
+	// Test connection failure
+	err := barrier.Await(context.Background())
+	assert.Error(t, err)
+}
+
+func TestBarrierConcurrentAction(t *testing.T) {
+	client := setupTestRedis()
+	ctx := context.Background()
+
+	actionCount := 0
+	action := func() error {
+		actionCount++
+		return nil
+	}
+
+	barrier := NewRedisBarrierWithAction(client, "test_barrier_concurrent_action", 3, 5*time.Second, action)
+
+	// Create channels to signal completion
+	done := make(chan bool, 3)
+
+	// Start three goroutines
+	for i := 0; i < 3; i++ {
+		go func() {
+			err := barrier.Await(ctx)
+			assert.NoError(t, err)
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 3; i++ {
+		<-done
+	}
+
+	// Verify action was executed exactly once
+	assert.Equal(t, 1, actionCount)
+}
+
+func TestBarrierKeyExpiration(t *testing.T) {
+	client := setupTestRedis()
+	ctx := context.Background()
+
+	// Create barrier with very short timeout
+	barrier := NewRedisBarrier(client, "test_barrier_expiration", 2, 1*time.Second)
+
+	// Start a goroutine that will wait
+	done := make(chan bool)
+	go func() {
+		err := barrier.Await(ctx)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "wait timeout")
+		done <- true
+	}()
+
+	// Wait for the goroutine to finish
+	<-done
+
+	// Verify the barrier key is gone
+	exists, err := client.Exists(ctx, "test_barrier_expiration").Result()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), exists)
+}
+
+func TestBarrierInvalidParties(t *testing.T) {
+	client := setupTestRedis()
+
+	// Test with zero parties
+	assert.Panics(t, func() {
+		NewRedisBarrier(client, "test_barrier_invalid", 0, 5*time.Second)
+	})
+
+	// Test with negative parties
+	assert.Panics(t, func() {
+		NewRedisBarrier(client, "test_barrier_invalid", -1, 5*time.Second)
+	})
+}
+
+func TestBarrierGetNumberWaitingEdgeCases(t *testing.T) {
+	client := setupTestRedis()
+	ctx := context.Background()
+	barrier := NewRedisBarrier(client, "test_barrier_waiting_edge", 2, 5*time.Second)
+
+	// Test when barrier is broken
+	barrier.Reset()
+	assert.Equal(t, 0, barrier.GetNumberWaiting())
+
+	// Test when Redis key doesn't exist
+	client.Del(ctx, "test_barrier_waiting_edge")
+	assert.Equal(t, 0, barrier.GetNumberWaiting())
+}
