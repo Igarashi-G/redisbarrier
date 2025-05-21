@@ -13,7 +13,7 @@ Inspired by cyclicbarrier https://github.com/marusama/cyclicbarrier
 ## Installation
 
 ```bash
-go get github.com/yourusername/redisbarrier
+go get github.com/igarashi-G/redisbarrier
 ```
 
 ## Usage
@@ -25,7 +25,7 @@ import (
     "context"
     "time"
     "github.com/go-redis/redis/v8"
-    "github.com/yourusername/redisbarrier"
+    "github.com/igarashi-G/redisbarrier"
 )
 
 // Create Redis client
