@@ -14,8 +14,8 @@ func main() {
 	// Create Redis client
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
-		Password: "", // no password set
-		DB:       0,  // use default DB
+		Password: "",
+		DB:       0,
 	})
 
 	// Example 1: Basic barrier usage
