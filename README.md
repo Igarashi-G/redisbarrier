@@ -1,6 +1,6 @@
 # redisbarrier
 [![Go Report Card](https://goreportcard.com/badge/github.com/Igarashi-G/redisbarrier)](https://goreportcard.com/report/github.com/Igarashi-G/redisbarrier)
-[![Coverage Status](https://coveralls.io/repos/github/Igarashi-G/redisbarrier/badge.svg?branch=master)](https://coveralls.io/github/Igarashi-G/redisbarrier?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/Igarashi-G/redisbarrier/badge.svg?branch=main)](https://coveralls.io/github/Igarashi-G/redisbarrier?branch=main)
 [![GoDoc](https://godoc.org/github.com/Igarashi-G/redisbarrier?status.svg)](https://godoc.org/github.com/Igarashi-G/redisbarrier)
 [![License](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](LICENSE)
 
