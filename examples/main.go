@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"redisbarrier"
+	"github.com/igarashi-G/redisbarrier"
 
 	"github.com/go-redis/redis/v8"
 )
